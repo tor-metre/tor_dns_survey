@@ -47,14 +47,18 @@ async def launch_tor(reactor):
     return [tor, config, state, socks]
 
 
-async def build_two_hop_circuit(state, guard, exit_node):
+async def build_two_hop_circuit(reactor, state, guard, exit_node):
     circuit = {}
     success = None
     error = ""
     t_start = datetime.datetime.now()
     try:
-        circuit = await state.build_circuit(routers=[guard, exit_node], using_guards=False)
-        await circuit.when_built()
+        circuitDef = state.build_circuit(routers=[guard, exit_node], using_guards=False)
+        circuitDef.addTimeout(60,reactor)
+        circuit = await circuitDef
+        d = circuit.when_built()
+        d.addTimeout(60,reactor)
+        await d
         success = True
     except Exception as err:
         error = str(err)
@@ -88,7 +92,7 @@ async def request_over_circuit(reactor, socks, circuit, bareIP):
 
 async def time_two_hop(reactor, state, socks, guard, exit_node, bareIP):
     timestamp = datetime.datetime.now()
-    circuit, circuit_results = await build_two_hop_circuit(state, guard, exit_node)
+    circuit, circuit_results = await build_two_hop_circuit(reactor,state, guard, exit_node)
     if circuit_results["success"]:
         request_results = await request_over_circuit(reactor, socks, circuit, bareIP)
     else:
