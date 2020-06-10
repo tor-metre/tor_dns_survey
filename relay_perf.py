@@ -20,7 +20,7 @@ class Measurement(Model):
     t_measure = DateTimeField()
     guard = TextField()
     exit = TextField()
-    url = TextField()
+    url = TextField(null=True)
 
     circuit_success = BooleanField()
     circuit_t_start = DateTimeField()
@@ -28,8 +28,8 @@ class Measurement(Model):
     circuit_error = CharField()
 
     request_success = BooleanField()
-    request_t_start = DateTimeField()
-    request_t_stop = DateTimeField()
+    request_t_start = DateTimeField(null=True)
+    request_t_stop = DateTimeField(null=True)
     request_error = CharField()
 
     class Meta:
@@ -60,8 +60,7 @@ async def build_two_hop_circuit(state, guard, exit_node):
         error = str(err)
         success = False
     t_stop = datetime.datetime.now()
-    return circuit, {"t_built": circuit.time_created,
-                     "success": success,
+    return circuit, {"success": success,
                      "t_start": t_start,
                      "t_stop": t_stop,
                      "error": error}
