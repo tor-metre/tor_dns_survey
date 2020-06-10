@@ -108,7 +108,7 @@ async def time_two_hop(reactor, state, socks, guard, exit_node, bareIP):
 async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
     nr = len(relays)
     ne = len(exits)
-    n = nr * ne
+    n = nr * ne * repeats
     for i in range(repeats):
         j = 0
         for relay in relays:
@@ -130,7 +130,7 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
                                 request_error = result['request']['error']
                 )
                 m.save()
-    return None
+    return n
 
 
 async def _main(reactor, fingerprint, bareIP):
@@ -149,10 +149,10 @@ async def _main(reactor, fingerprint, bareIP):
     exit_results = await test_relays(reactor, state, socks, [guard1], exits, 10, bareIP)
     print(exit_results)
 
-    exit_node = state.routers_by_hash["$7BD7B547676257EF147F5D5B7A5B15F840F4B579"]
+    exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
     relays = list(filter(lambda router: "exit" not in router.flags, routers))
     relay_results = await test_relays(reactor, state, socks, relays, [exit_node], 3, False)
-
+    print(relay_results)
 
 def main(fingerprint, bareIP):
     return react(
