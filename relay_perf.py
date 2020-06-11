@@ -89,6 +89,10 @@ async def time_two_hop(reactor, state, socks, guard, exit_node, bareIP):
     return measurement
 
 
+def getDeltaMilli(t1,t2):
+    return int((t2-t1).microseconds / 1000)
+
+
 async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
     nr = len(relays)
     ne = len(exits)
@@ -102,12 +106,11 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
                                             exit=result['exit'],
                                             url=result['request']['url'],
                                             circuit_success=result['circuit']['success'],
-                                            circuit_t_start=result['circuit']['t_start'],
-                                            circuit_t_stop=result['circuit']['t_stop'],
+                                            circuit_time = getDeltaMilli(result['circuit']['t_start'],result['circuit']['t_stop']),
                                             circuit_error=result['circuit']['error'],
                                             request_success=result['request']['success'],
-                                            request_t_start=result['request']['t_start'],
-                                            request_t_stop=result['request']['t_stop'],
+                                            request_time=getDeltaMilli(result['request']['t_start'],
+                                                                       result['request']['t_stop']),
                                             request_error=result['request']['error']
                                             # TODO Record more fields
                                             ))

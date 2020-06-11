@@ -16,13 +16,11 @@ class Measurement(Model):
     url = TextField(null=True)
 
     circuit_success = BooleanField()
-    circuit_t_start = DateTimeField()
-    circuit_t_stop = DateTimeField()
+    circuit_time = IntegerField()
     circuit_error = CharField()
 
     request_success = BooleanField()
-    request_t_start = DateTimeField(null=True)
-    request_t_stop = DateTimeField(null=True)
+    request_time = IntegerField()
     request_error = CharField()
     class Meta:
         database = db
