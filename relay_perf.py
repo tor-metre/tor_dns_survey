@@ -11,29 +11,7 @@ from twisted.internet.defer import ensureDeferred
 from twisted.internet.endpoints import TCP4ClientEndpoint
 from twisted.internet.task import react
 
-from peewee import *
-
-db = SqliteDatabase('measurements.db')
-
-
-class Measurement(Model):
-    t_measure = DateTimeField()
-    guard = TextField()
-    exit = TextField()
-    url = TextField(null=True)
-
-    circuit_success = BooleanField()
-    circuit_t_start = DateTimeField()
-    circuit_t_stop = DateTimeField()
-    circuit_error = CharField()
-
-    request_success = BooleanField()
-    request_t_start = DateTimeField(null=True)
-    request_t_stop = DateTimeField(null=True)
-    request_error = CharField()
-
-    class Meta:
-        database = db
+from Measurement import Measurement, batch_insert, getDatabase
 
 
 async def launch_tor(reactor):
@@ -54,10 +32,10 @@ async def build_two_hop_circuit(reactor, state, guard, exit_node):
     t_start = datetime.datetime.now()
     try:
         circuitDef = state.build_circuit(routers=[guard, exit_node], using_guards=False)
-        circuitDef.addTimeout(60,reactor)
+        circuitDef.addTimeout(60, reactor)
         circuit = await circuitDef
         d = circuit.when_built()
-        d.addTimeout(60,reactor)
+        d.addTimeout(60, reactor)
         await d
         success = True
     except Exception as err:
@@ -92,15 +70,15 @@ async def request_over_circuit(reactor, socks, circuit, bareIP):
 
 async def time_two_hop(reactor, state, socks, guard, exit_node, bareIP):
     timestamp = datetime.datetime.now()
-    circuit, circuit_results = await build_two_hop_circuit(reactor,state, guard, exit_node)
+    circuit, circuit_results = await build_two_hop_circuit(reactor, state, guard, exit_node)
     if circuit_results["success"]:
         request_results = await request_over_circuit(reactor, socks, circuit, bareIP)
     else:
         request_results = {"success": False,
-            "t_start": None,
-            "t_stop": None,
-            "error": "NO_CIRCUIT",
-            "url": None}
+                           "t_start": None,
+                           "t_stop": None,
+                           "error": "NO_CIRCUIT",
+                           "url": None}
     measurement = {"t_measure": timestamp,
                    "guard": guard.id_hex,
                    "exit": exit_node.id_hex,
@@ -115,25 +93,26 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
     n = nr * ne * repeats
     for i in range(repeats):
         j = 0
+        measurements = list()
         for relay in relays:
             for exit_node in exits:
                 j = j + 1
                 result = await time_two_hop(reactor, state, socks, relay, exit_node, bareIP)
-                print(result)
-                m = Measurement(t_measure=result['t_measure'],
-                                guard=result['guard'],
-                                exit=result['exit'],
-                                url=result['request']['url'],
-                                circuit_success=result['circuit']['success'],
-                                circuit_t_start=result['circuit']['t_start'],
-                                circuit_t_stop=result['circuit']['t_stop'],
-                                circuit_error=result['circuit']['error'],
-                                request_success = result['request']['success'],
-                                request_t_start = result['request']['t_start'],
-                                request_t_stop = result['request']['t_stop'],
-                                request_error = result['request']['error']
-                )
-                m.save()
+                measurements.append(Measurement(t_measure=result['t_measure'],
+                                                guard=result['guard'],
+                                                exit=result['exit'],
+                                                url=result['request']['url'],
+                                                circuit_success=result['circuit']['success'],
+                                                circuit_t_start=result['circuit']['t_start'],
+                                                circuit_t_stop=result['circuit']['t_stop'],
+                                                circuit_error=result['circuit']['error'],
+                                                request_success=result['request']['success'],
+                                                request_t_start=result['request']['t_start'],
+                                                request_t_stop=result['request']['t_stop'],
+                                                request_error=result['request']['error']
+                                                # TODO Record more fields
+                                                ))
+        batch_insert(measurements, 200)
     return n
 
 
@@ -158,6 +137,7 @@ async def _main(reactor, fingerprint, bareIP):
     relay_results = await test_relays(reactor, state, socks, relays, [exit_node], 3, False)
     print(relay_results)
 
+
 def main(fingerprint, bareIP):
     return react(
         lambda reactor: ensureDeferred(
@@ -167,6 +147,7 @@ def main(fingerprint, bareIP):
 
 
 if __name__ == '__main__':
+    db = getDatabase()
     db.connect()
     db.create_tables([Measurement])
     main(None, False)
