@@ -6,10 +6,12 @@ import time
 import txtorcon
 import urllib.request
 
+from tqdm import tqdm
 from twisted.internet import asyncioreactor
 from twisted.internet.defer import ensureDeferred
 from twisted.internet.endpoints import TCP4ClientEndpoint
 from twisted.internet.task import react
+from itertools import product
 
 from Measurement import Measurement, batch_insert, getDatabase
 
@@ -92,27 +94,25 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
     ne = len(exits)
     n = nr * ne * repeats
     for i in range(repeats):
-        j = 0
         measurements = list()
-        for relay in relays:
-            for exit_node in exits:
-                j = j + 1
-                result = await time_two_hop(reactor, state, socks, relay, exit_node, bareIP)
-                measurements.append(Measurement(t_measure=result['t_measure'],
-                                                guard=result['guard'],
-                                                exit=result['exit'],
-                                                url=result['request']['url'],
-                                                circuit_success=result['circuit']['success'],
-                                                circuit_t_start=result['circuit']['t_start'],
-                                                circuit_t_stop=result['circuit']['t_stop'],
-                                                circuit_error=result['circuit']['error'],
-                                                request_success=result['request']['success'],
-                                                request_t_start=result['request']['t_start'],
-                                                request_t_stop=result['request']['t_stop'],
-                                                request_error=result['request']['error']
-                                                # TODO Record more fields
-                                                ))
+        for relay, exit_node in tqdm(product(relays,exits),total=nr*ne,leave=False):
+            result = await time_two_hop(reactor, state, socks, relay, exit_node, bareIP)
+            measurements.append(Measurement(t_measure=result['t_measure'],
+                                            guard=result['guard'],
+                                            exit=result['exit'],
+                                            url=result['request']['url'],
+                                            circuit_success=result['circuit']['success'],
+                                            circuit_t_start=result['circuit']['t_start'],
+                                            circuit_t_stop=result['circuit']['t_stop'],
+                                            circuit_error=result['circuit']['error'],
+                                            request_success=result['request']['success'],
+                                            request_t_start=result['request']['t_start'],
+                                            request_t_stop=result['request']['t_stop'],
+                                            request_error=result['request']['error']
+                                            # TODO Record more fields
+                                            ))
         batch_insert(measurements, 200)
+        print(f"Inserted {len(measurements)} records")
     return n
 
 
