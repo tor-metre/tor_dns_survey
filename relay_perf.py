@@ -5,6 +5,7 @@ import os
 import time
 import txtorcon
 import urllib.request
+import requests
 
 from tqdm import tqdm
 from twisted.internet import asyncioreactor
@@ -90,10 +91,22 @@ async def time_two_hop(reactor, state, socks, guard, exit_node, bareIP):
 
 
 def getDeltaMilli(t1,t2):
-    return int((t2-t1).microseconds / 1000)
+    if t1 is None or t2 is None:
+        return -1
+    else:
+        return int((t2-t1).microseconds / 1000)
 
+def get_gcp_metadata(key):
+    session = requests.Session()
+    proxies = {"http": None, "https": None}
 
-async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
+    response = session.get(
+        f'http://metadata.google.internal/computeMetadata/v1/instance/{key}',
+        headers={'Metadata-Flavor': 'Google'},
+        timeout=30, proxies=proxies)
+    return response
+
+async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP,tv,gcpI,gcpZ):
     nr = len(relays)
     ne = len(exits)
     n = nr * ne * repeats
@@ -101,7 +114,10 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
         measurements = list()
         for relay, exit_node in tqdm(product(relays,exits),total=nr*ne,leave=False):
             result = await time_two_hop(reactor, state, socks, relay, exit_node, bareIP)
-            measurements.append(Measurement(t_measure=result['t_measure'],
+            measurements.append(Measurement(timestamp=result['t_measure'],
+                                            tor_version=tv,
+                                            gcp_instance = gcpI,
+                                            gcp_zone = gcpZ,
                                             guard=result['guard'],
                                             exit=result['exit'],
                                             url=result['request']['url'],
@@ -115,12 +131,15 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP):
                                             # TODO Record more fields
                                             ))
         batch_insert(measurements, 200)
-        print(f"Inserted {len(measurements)} records")
+        print(f"Inserted {len(measurements)} records at {datetime.datetime.now()}")
     return n
 
 
 async def _main(reactor, fingerprint, bareIP):
     [tor, config, state, socks] = await launch_tor(reactor)
+    gcpI = get_gcp_metadata("name").text
+    gcpZ = get_gcp_metadata("zone").text.split("/")[-1]
+    print(f"Running on {gcpI} in {gcpZ}")
     config.CircuitBuildTimeout = 10
     config.SocksTimeout = 10
     config.CircuitStreamTimeout = 10
@@ -132,7 +151,7 @@ async def _main(reactor, fingerprint, bareIP):
 
     guard1 = state.routers_by_hash["$6C251FA7F45E9DEDF5F69BA3D167F6BA736F49CD"]
     exits = list(filter(lambda router: "exit" in router.flags, routers))
-    exit_results = await test_relays(reactor, state, socks, [guard1], exits, 10, bareIP)
+    exit_results = await test_relays(reactor, state, socks, [guard1], exits, 10, bareIP,tor.version,gcpI,gcpZ)
     print(exit_results)
 
     exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
@@ -150,6 +169,7 @@ def main(fingerprint, bareIP):
 
 
 if __name__ == '__main__':
+    print(f"Beginning Measurements at {datetime.datetime.now()}")
     db = getDatabase()
     db.connect()
     db.create_tables([Measurement])

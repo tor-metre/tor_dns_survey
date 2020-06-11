@@ -10,7 +10,11 @@ def batch_insert(measurements,batch):
         Measurement.bulk_create(measurements, batch)
 
 class Measurement(Model):
-    t_measure = DateTimeField()
+    tor_version = TextField()
+    gcp_instance = TextField()
+    gcp_zone = TextField()
+
+    timestamp = DateTimeField()
     guard = TextField()
     exit = TextField()
     url = TextField(null=True)
