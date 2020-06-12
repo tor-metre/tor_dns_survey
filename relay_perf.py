@@ -6,6 +6,7 @@ import time
 import txtorcon
 import urllib.request
 import requests
+import sys
 
 from tqdm import tqdm
 from twisted.internet import asyncioreactor
@@ -13,18 +14,17 @@ from twisted.internet.defer import ensureDeferred
 from twisted.internet.endpoints import TCP4ClientEndpoint
 from twisted.internet.task import react
 from itertools import product
+import uuid
 
 from Measurement import Measurement, batch_insert, getDatabase
 
 
-async def launch_tor(reactor):
+async def launch_tor(reactor,uID):
     control_ep = TCP4ClientEndpoint(reactor, "localhost", 9051)
     tor = await txtorcon.connect(reactor, control_ep, password_function=lambda: "bilboBaggins789")
-    # tor = await txtorcon.launch(reactor, progress_updates=print, data_directory="./tor_data")
     config = await tor.get_config()
     state = await tor.create_state()
     socks = await config.create_socks_endpoint(reactor, "9050")
-    print("Connected to tor {}".format(tor.version))
     return [tor, config, state, socks]
 
 
@@ -106,7 +106,7 @@ def get_gcp_metadata(key):
         timeout=30, proxies=proxies)
     return response
 
-async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP,tv,gcpI,gcpZ):
+async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP,tv,gcpI,gcpZ,uID):
     nr = len(relays)
     ne = len(exits)
     n = nr * ne * repeats
@@ -116,6 +116,7 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP,tv,g
             result = await time_two_hop(reactor, state, socks, relay, exit_node, bareIP)
             measurements.append(Measurement(timestamp=result['t_measure'],
                                             tor_version=tv,
+                                            process=uID,
                                             gcp_instance = gcpI,
                                             gcp_zone = gcpZ,
                                             guard=result['guard'],
@@ -136,10 +137,11 @@ async def test_relays(reactor, state, socks, relays, exits, repeats, bareIP,tv,g
 
 
 async def _main(reactor, fingerprint, bareIP):
-    [tor, config, state, socks] = await launch_tor(reactor)
+    uID = uuid.uuid1()
+    [tor, config, state, socks] = await launch_tor(reactor,uID)
     gcpI = get_gcp_metadata("name").text
     gcpZ = get_gcp_metadata("zone").text.split("/")[-1]
-    print(f"Running on {gcpI} in {gcpZ}")
+    print(f"Running as {uID} on {gcpI} in {gcpZ} with Tor {tor.version}")
     config.CircuitBuildTimeout = 10
     config.SocksTimeout = 10
     config.CircuitStreamTimeout = 10
@@ -151,12 +153,12 @@ async def _main(reactor, fingerprint, bareIP):
 
     guard1 = state.routers_by_hash["$6C251FA7F45E9DEDF5F69BA3D167F6BA736F49CD"]
     exits = list(filter(lambda router: "exit" in router.flags, routers))
-    exit_results = await test_relays(reactor, state, socks, [guard1], exits, 10, bareIP,tor.version,gcpI,gcpZ)
+    exit_results = await test_relays(reactor, state, socks, [guard1], exits, 10, bareIP,tor.version,gcpI,gcpZ,uID)
     print(exit_results)
 
     exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
     relays = list(filter(lambda router: "exit" not in router.flags, routers))
-    relay_results = await test_relays(reactor, state, socks, relays, [exit_node], 3, False,tor.version,gcpI,gcpZ)
+    relay_results = await test_relays(reactor, state, socks, relays, [exit_node], 3, False,tor.version,gcpI,gcpZ,uID)
     print(relay_results)
 
 

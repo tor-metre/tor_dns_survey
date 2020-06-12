@@ -10,6 +10,7 @@ def batch_insert(measurements,batch):
         Measurement.bulk_create(measurements, batch)
 
 class Measurement(Model):
+    process = UUIDField()
     tor_version = TextField()
     gcp_instance = TextField()
     gcp_zone = TextField()
