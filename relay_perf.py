@@ -62,7 +62,7 @@ async def build_one_hop_circuit(reactor, state, target):
                      "t_start": t_start,
                      "t_stop": t_stop,
                      "error": error,
-                     "target": target}
+                     "target": target.id_hex}
 
 
 async def build_two_hop_circuit(reactor, state, guard, exit_node):
