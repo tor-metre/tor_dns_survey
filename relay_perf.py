@@ -40,8 +40,8 @@ async def build_one_hop_circuit(reactor, state, target):
     t_start = datetime.datetime.now()
     try:
         circuitDef = state.build_circuit(routers=[target], using_guards=False)
-        circuitDef.addTimeout(10, reactor)
-        circuit = await ensureDeferred(circuitDef)
+        #circuitDef.addTimeout(10, reactor)
+        circuit = await circuitDef
     except Exception as err:
         print(f"Err path exercised {err}")
         circuitDef.cancel()
@@ -50,8 +50,8 @@ async def build_one_hop_circuit(reactor, state, target):
     if success:
         try:
             d = circuit.when_built()
-            d.addTimeout(10, reactor)
-            await ensureDeferred(d)
+            #d.addTimeout(10, reactor)
+            await d
         except Exception as err:
             print(f"Err path exercised {err}")
             circuitDef.cancel()
@@ -73,10 +73,10 @@ async def build_two_hop_circuit(reactor, state, guard, exit_node):
     t_start = datetime.datetime.now()
     try:
         circuitDef = state.build_circuit(routers=[guard, exit_node], using_guards=False)
-        circuitDef.addTimeout(20, reactor)
+        #circuitDef.addTimeout(20, reactor)
         circuit = await circuitDef
         d = circuit.when_built()
-        d.addTimeout(20, reactor)
+        #d.addTimeout(20, reactor)
         await d
         success = True
     except Exception as err:
