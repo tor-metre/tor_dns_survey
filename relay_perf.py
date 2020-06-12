@@ -156,7 +156,7 @@ async def _main(reactor, fingerprint, bareIP):
 
     exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
     relays = list(filter(lambda router: "exit" not in router.flags, routers))
-    relay_results = await test_relays(reactor, state, socks, relays, [exit_node], 3, False)
+    relay_results = await test_relays(reactor, state, socks, relays, [exit_node], 3, False,tor.version,gcpI,gcpZ)
     print(relay_results)
 
 
