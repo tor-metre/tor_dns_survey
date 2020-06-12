@@ -12,24 +12,25 @@ from peewee import chunked
 from tqdm import tqdm
 from twisted.internet import asyncioreactor
 from twisted.internet.defer import ensureDeferred
-from twisted.internet.endpoints import TCP4ClientEndpoint
+from twisted.internet.endpoints import TCP4ClientEndpoint, UNIXClientEndpoint
 from twisted.internet.task import react
 import twisted
 from itertools import product
 import uuid
 from random import shuffle
+from time import sleep
 
 def silent(_stuff=None,_why=None,**kw):
     return
 
 from Measurement import OneCircuitMeasurement,TwoHopMeasurement, batch_one_circ_insert, batch_two_hop_insert, getDatabase
 
-async def launch_tor(reactor, uID):
-    control_ep = TCP4ClientEndpoint(reactor, "localhost", 9051)
-    tor = await txtorcon.connect(reactor, control_ep, password_function=lambda: "bilboBaggins789")
+async def launch_tor(reactor, instance,uID):
+    control_ep = UNIXClientEndpoint(reactor, f"/run/tor-instances/{instance}/control")
+    tor = await txtorcon.connect(reactor, control_ep)
     config = await tor.get_config()
     state = await tor.create_state()
-    socks = await config.create_socks_endpoint(reactor, "9050")
+    socks = UNIXClientEndpoint(reactor,f"/run/tor-instances/{instance}/socks")
     return [tor, config, state, socks]
 
 async def build_one_hop_circuit(reactor, state, target):
@@ -223,7 +224,7 @@ async def test_one_circuit(reactor, state, targets, repeats, tv, gcpI, gcpZ, uID
 
 async def _main(reactor, fingerprint, bareIP):
     uID = uuid.uuid1()
-    [tor, config, state, socks] = await launch_tor(reactor, uID)
+    [tor, config, state, socks] = await launch_tor(reactor,"one",uID)
     gcpI = get_gcp_metadata("name").text
     gcpZ = get_gcp_metadata("zone").text.split("/")[-1]
     print(f"Running as {uID} on {gcpI} in {gcpZ} with Tor {tor.version}")
