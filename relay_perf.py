@@ -33,7 +33,7 @@ async def launch_tor(reactor, uID):
     return [tor, config, state, socks]
 
 async def build_one_hop_circuit(reactor, state, target):
-    circuit = {}
+    circuit = None
     success = True
     error = ""
     t_start = datetime.datetime.now()
