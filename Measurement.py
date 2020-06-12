@@ -1,6 +1,6 @@
 from peewee import *
 
-db = SqliteDatabase('measurements.db')
+db = SqliteDatabase(None)
 
 def getDatabase():
     return db

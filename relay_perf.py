@@ -20,9 +20,6 @@ import uuid
 from random import shuffle
 from time import sleep
 
-def silent(_stuff=None,_why=None,**kw):
-    return
-
 from Measurement import OneCircuitMeasurement,TwoHopMeasurement, batch_one_circ_insert, batch_two_hop_insert, getDatabase
 
 async def launch_tor(reactor, instance,uID):
@@ -89,11 +86,11 @@ async def build_two_hop_circuit(reactor, state, guard, exit_node):
                      "error": error}
 
 
-async def request_over_circuit(reactor, socks, circuit, bareIP):
+async def request_over_circuit(reactor, socks, circuit):
     success = None
     error = ""
     t_start = datetime.datetime.now()
-    url = b"http://93.184.216.34" if bareIP else b"http://example.com"
+    url = b"http://example.com"
     try:
         agent = circuit.web_agent(reactor, socks)
         resp = await agent.request(b'HEAD', url)
@@ -117,11 +114,11 @@ def gracefulClose(circuit):
         except Exception as err:
             return
 
-async def time_two_hop(reactor, state, socks, guard, exit_node, bareIP):
+async def time_two_hop(reactor, state, socks, guard, exit_node):
     timestamp = datetime.datetime.now()
     circuit, circuit_results = await build_two_hop_circuit(reactor, state, guard, exit_node)
     if circuit_results["success"]:
-        request_results = await request_over_circuit(reactor, socks, circuit, bareIP)
+        request_results = await request_over_circuit(reactor, socks, circuit)
     else:
         request_results = {"success": False,
                            "t_start": None,
@@ -187,14 +184,14 @@ def resultToOneCircMeasurement(result, tv, uID, gcpI, gcpZ):
                              )
 
 
-async def test_two_hops(reactor, state, socks, relays, exits, repeats, bareIP, tv, gcpI, gcpZ, uID):
+async def test_two_hops(reactor, state, socks, relays, exits, repeats, tv, gcpI, gcpZ, uID):
     nr = len(relays)
     ne = len(exits)
     n = nr * ne * repeats
     for i in range(repeats):
         measurements = list()
         for relay, exit_node in tqdm(product(relays, exits), total=nr * ne, leave=False):
-            result = await time_two_hop(reactor, state, socks, relay, exit_node, bareIP)
+            result = await time_two_hop(reactor, state, socks, relay, exit_node)
             measurements.append(resultToTwoHopMeasurement(result, tv, gcpI, gcpZ, uID))
         batch_two_hop_insert(measurements, 200)
         print(f"Inserted {len(measurements)} records at {datetime.datetime.now()}")
@@ -221,52 +218,46 @@ async def test_one_circuit(reactor, state, targets, repeats, tv, gcpI, gcpZ, uID
             print(f"Inserted {len(measurements)} records at {datetime.datetime.now()}")
     return n
 
-
-async def _main(reactor, fingerprint, bareIP):
+async def setup(reactor,instance):
     uID = uuid.uuid1()
-    [tor, config, state, socks] = await launch_tor(reactor,"one",uID)
+    [tor, config, state, socks] = await launch_tor(reactor, instance, uID)
     gcpI = get_gcp_metadata("name").text
     gcpZ = get_gcp_metadata("zone").text.split("/")[-1]
     print(f"Running as {uID} on {gcpI} in {gcpZ} with Tor {tor.version}")
     config.CircuitBuildTimeout = 10
     config.SocksTimeout = 10
     config.CircuitStreamTimeout = 10
-    config.save()
-    if fingerprint == None:
-        routers = state.all_routers
-    else:
-        routers = [state.routers_by_hash[fingerprint]]
-
+    #config.save() #TODO Fix this
+    routers = state.all_routers
     relays = list(routers)
     shuffle(relays)
-    relay_results = await test_one_circuit(reactor, state, relays, 1, tor.version, gcpI, gcpZ, uID)
-    print(relay_results)
-    exit(0)
+    return tor,state,relays,socks,gcpI,gcpZ,uID
 
-    guard1 = state.routers_by_hash["$6C251FA7F45E9DEDF5F69BA3D167F6BA736F49CD"]
-    exits = list(filter(lambda router: "exit" in router.flags, routers))
-    exit_results = await test_two_hops(reactor, state, socks, [guard1], exits, 10, bareIP, tor.version, gcpI, gcpZ, uID)
-    print(exit_results)
-
-    exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
-    relays = list(filter(lambda router: "exit" not in router.flags, routers))
-    relay_results = await test_two_hops(reactor, state, socks, relays, [exit_node], 3, False, tor.version, gcpI, gcpZ,
-                                        uID)
-    print(relay_results)
-
-
-def main(fingerprint, bareIP):
-    return react(
-        lambda reactor: ensureDeferred(
-            _main(reactor, fingerprint, bareIP)
-        )
-    )
-
-
-if __name__ == '__main__':
+async def _main(reactor,arguments):
     print(f"Beginning Measurements at {datetime.datetime.now()}")
     db = getDatabase()
+    db.init(arguments.database)
     db.connect()
     db.create_tables([TwoHopMeasurement,OneCircuitMeasurement])
-    main(None, False)
+    #TODO store tor.pid and instance name
+    tor,state,relays,socks,gcpI,gcpZ,uID = await setup(reactor,arguments.instance)
+
+    if arguments.mode == "one-hop":
+        await test_one_circuit(reactor, state, relays, 1, tor.version, gcpI, gcpZ, uID)
+    elif arguments.mode == "exits":
+        guard1 = state.routers_by_hash["$6C251FA7F45E9DEDF5F69BA3D167F6BA736F49CD"]
+        exits = list(filter(lambda router: "exit" in router.flags, relays))
+        await test_two_hops(reactor, state, socks, [guard1], exits, 1, tor.version, gcpI, gcpZ, uID)
+    elif arguments.mode == "guards":
+        exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
+        relays = list(filter(lambda router: "exit" not in router.flags, relays))
+        await test_two_hops(reactor, state, socks, relays, [exit_node], 1, tor.version, gcpI, gcpZ,
+                                            uID)
     db.close()
+
+def main(arguments):
+    return react(
+        lambda reactor: ensureDeferred(
+            _main(reactor, arguments)
+        )
+    )
