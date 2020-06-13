@@ -24,7 +24,7 @@ from Measurement import OneCircuitMeasurement, TwoHopMeasurement, batch_one_circ
     getDatabase
 
 
-async def launch_tor(reactor, instance, uID):
+async def launch_tor(reactor, instance):
     control_ep = UNIXClientEndpoint(reactor, f"/run/tor-instances/{instance}/control")
     tor = await txtorcon.connect(reactor, control_ep)
     config = await tor.get_config()
@@ -33,80 +33,51 @@ async def launch_tor(reactor, instance, uID):
     return [tor, config, state, socks]
 
 
-async def build_one_hop_circuit(reactor, state, target):
-    circuit = None
-    success = True
-    error = ""
-    t_start = datetime.datetime.now()
-    try:
-        circuitDef = state.build_circuit(routers=[target], using_guards=False)
-        # circuitDef.addTimeout(10, reactor)
-        circuit = await circuitDef
-    except Exception as err:
-        print(f"Err path exercised {err}")
-        circuitDef.cancel()
-        error = str(err)
-        success = False
-    if success:
-        try:
-            d = circuit.when_built()
-            # d.addTimeout(10, reactor)
-            await d
-        except Exception as err:
-            print(f"Err path exercised {err}")
-            circuitDef.cancel()
-            d.cancel()
-            error = str(err)
-            success = False
-    t_stop = datetime.datetime.now()
-    return circuit, {"success": success,
-                     "t_start": t_start,
-                     "t_stop": t_stop,
-                     "error": error,
-                     "target": target.id_hex}
+def prependToKey(name, dic):
+    if name == "":
+        return dic
+    new_dic = {}
+    for k, v in dic.items():
+        new_dic[f"{name}_{k}"] = v
+    return new_dic
 
 
-async def build_two_hop_circuit(reactor, state, guard, exit_node):
+async def build_circuit(config, path):
     circuit = {}
-    success = None
     error = ""
     t_start = datetime.datetime.now()
     try:
-        circuitDef = state.build_circuit(routers=[guard, exit_node], using_guards=False)
-        # circuitDef.addTimeout(20, reactor)
+        circuitDef = config['state'].build_circuit(routers=path, using_guards=False)
         circuit = await circuitDef
-        d = circuit.when_built()
-        # d.addTimeout(20, reactor)
-        await d
+        await circuit.when_built()
         success = True
     except Exception as err:
         error = str(err)
         success = False
     t_stop = datetime.datetime.now()
+    delta = getDeltaMilli(t_start,t_stop)
     return circuit, {"success": success,
-                     "t_start": t_start,
-                     "t_stop": t_stop,
+                     "time":delta,
                      "error": error}
 
 
-async def request_over_circuit(reactor, socks, circuit):
+async def request_over_circuit(config, circuit):
     success = None
     error = ""
     t_start = datetime.datetime.now()
-    url = b"http://example.com"
     try:
-        agent = circuit.web_agent(reactor, socks)
-        resp = await agent.request(b'HEAD', url)
+        agent = circuit.web_agent(config['reactor'], config['socks'])
+        await agent.request(b'HEAD', config['url'])
         success = True
     except Exception as err:
         error = str(err)
         success = False
     t_stop = datetime.datetime.now()
+    delta = getDeltaMilli(t_start,t_stop)
     return {"success": success,
-            "t_start": t_start,
-            "t_stop": t_stop,
+            "time": delta,
             "error": error,
-            "url": url}
+            "url": config['url']}
 
 
 def gracefulClose(circuit):
@@ -119,22 +90,16 @@ def gracefulClose(circuit):
             return
 
 
-async def time_two_hop(reactor, state, socks, guard, exit_node):
+async def time_two_hop(config, guard, exit_node):
     timestamp = datetime.datetime.now()
-    circuit, circuit_results = await build_two_hop_circuit(reactor, state, guard, exit_node)
-    if circuit_results["success"]:
-        request_results = await request_over_circuit(reactor, socks, circuit)
-    else:
-        request_results = {"success": False,
-                           "t_start": None,
-                           "t_stop": None,
-                           "error": "NO_CIRCUIT",
-                           "url": None}
-    measurement = {"t_measure": timestamp,
-                   "guard": guard.id_hex,
-                   "exit": exit_node.id_hex,
-                   "circuit": circuit_results,
-                   "request": request_results}
+    measurement = {"timestamp": timestamp,
+                   "guard": guard.id_hex, #TODO Include more details
+                   "exit": exit_node.id_hex}
+    circuit, circuit_results = await build_circuit(config, [guard, exit_node])
+    measurement.update(prependToKey("circuit", circuit_results))
+    if circuit_results["circuit_success"]:
+        request_results = await request_over_circuit(config, circuit)
+        measurement.update(prependToKey("request", request_results))
     gracefulClose(circuit)
     return measurement
 
@@ -157,39 +122,14 @@ def get_gcp_metadata(key):
     return response
 
 
-def resultToTwoHopMeasurement(result, metadata):
-    return TwoHopMeasurement(timestamp=result['t_measure'],
-                             guard=result['guard'],
-                             exit=result['exit'],
-                             url=result['request']['url'],
-                             circuit_success=result['circuit']['success'],
-                             circuit_time=getDeltaMilli(result['circuit']['t_start'], result['circuit']['t_stop']),
-                             circuit_error=result['circuit']['error'],
-                             request_success=result['request']['success'],
-                             request_time=getDeltaMilli(result['request']['t_start'],
-                                                        result['request']['t_stop']),
-                             request_error=result['request']['error'],
-                             **metadata,
-                             )
-
-
-def resultToOneCircMeasurement(result, metadata):
-    return TwoHopMeasurement(timestamp=result['t_measure'],
-                             target=result['target'],
-                             circuit_success=result['success'],
-                             circuit_time=getDeltaMilli(result['t_start'], result['t_stop']),
-                             circuit_error=result['error'],
-                             **metadata
-                             )
-
-
 async def test_two_hops(config, metadata, sources, exits):
     nr = len(sources)
     ne = len(exits)
     measurements = list()
     for relay, exit_node in tqdm(product(sources, exits), total=nr * ne, leave=False):
         result = await time_two_hop(config, relay, exit_node)
-        measurements.append(resultToTwoHopMeasurement(result, metadata))
+        result.update(metadata)
+        measurements.append(TwoHopMeasurement(**result))
     batch_two_hop_insert(measurements, 200)
     print(f"Inserted {len(measurements)} two-hop measurements at {datetime.datetime.now()}")
     return True
@@ -200,14 +140,12 @@ async def test_one_circuit(config, metadata, targets, chunk_size=100):
         measurements = list()
         for t in tqdm(chunk, total=chunk_size, leave=False):
             timestamp = datetime.datetime.now()
-            try:
-                c, result = await build_one_hop_circuit(config['reactor'], config['state'], t)
-                gracefulClose(c)
-            except Exception as err:
-                print(f"Top Level Error: {err}")
-                continue
-            result['t_measure'] = timestamp
-            measurements.append(resultToOneCircMeasurement(result, metadata))
+            measurement = {"timestamp":timestamp,"target":t.id_hex} #TODO Include more details
+            c, result = await build_circuit(config, [t])
+            gracefulClose(c)
+            measurement.update(prependToKey("",result))
+            measurement.update(metadata)
+            measurements.append(OneCircuitMeasurement(**measurement))
         batch_one_circ_insert(measurements, chunk_size)
         print(f"Inserted {len(measurements)} one-hop measurements at {datetime.datetime.now()}")
     return True
@@ -223,13 +161,13 @@ async def setup(reactor, instance):
     shuffle(relays)
     config = {"reactor": reactor, "tor": tor, "state": state, "relays": relays, "socks": socks}
     metadata = {
-        "gcp_inst": get_gcp_metadata("name").text,
+        "gcp_instance": get_gcp_metadata("name").text,
         "gcp_zone": get_gcp_metadata("zone").text.split("/")[-1],
-        "uuid": uuid.uuid1(),
+        "measurer_id": uuid.uuid1(),
         "tor_pid": state.tor_pid,
         "tor_version": tor.version,
         "tor_instance": instance}
-    return config,metadata
+    return config, metadata
 
 
 async def _main(reactor, arguments):
@@ -240,7 +178,7 @@ async def _main(reactor, arguments):
     db.create_tables([TwoHopMeasurement, OneCircuitMeasurement])
     c, m = await setup(reactor, arguments.instance)
     print(
-        f"Running as {m['uuid']} on {m['gcp_inst']} in {m['gcp_zone']} with Tor instance {m['tor_instance']} pid {m['tor_pid']}  v{m['tor_version']}")
+        f"Running as {m['measurer_id']} on {m['gcp_instance']} in {m['gcp_zone']} with tor instance '{m['tor_instance']}' with pid {m['tor_pid']}  v{m['tor_version']}")
     if arguments.mode == "one-hop":
         await test_one_circuit(c, m, c['relays'])
     elif arguments.mode == "exits":

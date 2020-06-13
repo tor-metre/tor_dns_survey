@@ -14,12 +14,14 @@ def batch_one_circ_insert(measurements, batch):
         OneCircuitMeasurement.bulk_create(measurements, batch)
 
 class TwoHopMeasurement(Model):
-    process = UUIDField()
+    measurer_id = UUIDField()
+    tor_pid = IntegerField()
     tor_version = TextField()
+    tor_instance = TextField()
     gcp_instance = TextField()
     gcp_zone = TextField()
-
     timestamp = DateTimeField()
+
     guard = TextField()
     exit = TextField()
     url = TextField(null=True)
@@ -35,8 +37,10 @@ class TwoHopMeasurement(Model):
         database = db
 
 class OneCircuitMeasurement(Model):
-    process = UUIDField()
+    measurer_id = UUIDField()
+    tor_pid = IntegerField()
     tor_version = TextField()
+    tor_instance = TextField()
     gcp_instance = TextField()
     gcp_zone = TextField()
 
