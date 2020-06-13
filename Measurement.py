@@ -1,6 +1,6 @@
 from peewee import *
 
-db = SqliteDatabase(None)
+db = PostgresqlDatabase(None)
 
 def getDatabase():
     return db

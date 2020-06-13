@@ -20,6 +20,8 @@ import uuid
 from random import shuffle
 from time import sleep
 
+from playhouse.db_url import parse as db_url_parse
+
 from Measurement import OneCircuitMeasurement, TwoHopMeasurement, batch_one_circ_insert, batch_two_hop_insert, \
     getDatabase
 
@@ -173,7 +175,10 @@ async def setup(reactor, instance):
 async def _main(reactor, arguments):
     print(f"Beginning Measurements at {datetime.datetime.now()}")
     db = getDatabase()
-    db.init(arguments.database)
+    print(arguments.database)
+    db_args = db_url_parse(arguments.database)
+    print(db_args)
+    db.init(**db_args)
     db.connect()
     db.create_tables([TwoHopMeasurement, OneCircuitMeasurement])
     c, m = await setup(reactor, arguments.instance)
