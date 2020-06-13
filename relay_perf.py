@@ -45,13 +45,15 @@ def prependToKey(name, dic):
 
 
 async def build_circuit(config, path):
-    circuit = {}
+    circuit = None
     error = ""
     t_start = datetime.datetime.now()
     try:
         circuitDef = config['state'].build_circuit(routers=path, using_guards=False)
         circuit = await circuitDef
-        await circuit.when_built()
+        d = circuit.when_built()
+        d.addTimeout(10,config['reactor'])
+        await d
         success = True
     except Exception as err:
         error = str(err)
@@ -64,7 +66,7 @@ async def build_circuit(config, path):
 
 
 async def request_over_circuit(config, circuit):
-    success = None
+    success = False
     error = ""
     t_start = datetime.datetime.now()
     try:
@@ -145,7 +147,7 @@ async def test_one_circuit(config, metadata, targets, chunk_size=100):
             measurement = {"timestamp":timestamp,"target":t.id_hex} #TODO Include more details
             c, result = await build_circuit(config, [t])
             gracefulClose(c)
-            measurement.update(prependToKey("",result))
+            measurement.update(prependToKey("circuit",result))
             measurement.update(metadata)
             measurements.append(OneCircuitMeasurement(**measurement))
         batch_one_circ_insert(measurements, chunk_size)
