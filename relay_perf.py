@@ -20,15 +20,18 @@ import uuid
 from random import shuffle
 from time import sleep
 
-from Measurement import OneCircuitMeasurement,TwoHopMeasurement, batch_one_circ_insert, batch_two_hop_insert, getDatabase
+from Measurement import OneCircuitMeasurement, TwoHopMeasurement, batch_one_circ_insert, batch_two_hop_insert, \
+    getDatabase
 
-async def launch_tor(reactor, instance,uID):
+
+async def launch_tor(reactor, instance, uID):
     control_ep = UNIXClientEndpoint(reactor, f"/run/tor-instances/{instance}/control")
     tor = await txtorcon.connect(reactor, control_ep)
     config = await tor.get_config()
     state = await tor.create_state()
-    socks = UNIXClientEndpoint(reactor,f"/run/tor-instances/{instance}/socks")
+    socks = UNIXClientEndpoint(reactor, f"/run/tor-instances/{instance}/socks")
     return [tor, config, state, socks]
+
 
 async def build_one_hop_circuit(reactor, state, target):
     circuit = None
@@ -37,7 +40,7 @@ async def build_one_hop_circuit(reactor, state, target):
     t_start = datetime.datetime.now()
     try:
         circuitDef = state.build_circuit(routers=[target], using_guards=False)
-        #circuitDef.addTimeout(10, reactor)
+        # circuitDef.addTimeout(10, reactor)
         circuit = await circuitDef
     except Exception as err:
         print(f"Err path exercised {err}")
@@ -47,7 +50,7 @@ async def build_one_hop_circuit(reactor, state, target):
     if success:
         try:
             d = circuit.when_built()
-            #d.addTimeout(10, reactor)
+            # d.addTimeout(10, reactor)
             await d
         except Exception as err:
             print(f"Err path exercised {err}")
@@ -70,10 +73,10 @@ async def build_two_hop_circuit(reactor, state, guard, exit_node):
     t_start = datetime.datetime.now()
     try:
         circuitDef = state.build_circuit(routers=[guard, exit_node], using_guards=False)
-        #circuitDef.addTimeout(20, reactor)
+        # circuitDef.addTimeout(20, reactor)
         circuit = await circuitDef
         d = circuit.when_built()
-        #d.addTimeout(20, reactor)
+        # d.addTimeout(20, reactor)
         await d
         success = True
     except Exception as err:
@@ -105,6 +108,7 @@ async def request_over_circuit(reactor, socks, circuit):
             "error": error,
             "url": url}
 
+
 def gracefulClose(circuit):
     if circuit is None:
         return
@@ -113,6 +117,7 @@ def gracefulClose(circuit):
             circuit.close()
         except Exception as err:
             return
+
 
 async def time_two_hop(reactor, state, socks, guard, exit_node):
     timestamp = datetime.datetime.now()
@@ -152,12 +157,8 @@ def get_gcp_metadata(key):
     return response
 
 
-def resultToTwoHopMeasurement(result, tv, uID, gcpI, gcpZ):
+def resultToTwoHopMeasurement(result, metadata):
     return TwoHopMeasurement(timestamp=result['t_measure'],
-                             tor_version=tv,
-                             process=uID,
-                             gcp_instance=gcpI,
-                             gcp_zone=gcpZ,
                              guard=result['guard'],
                              exit=result['exit'],
                              url=result['request']['url'],
@@ -167,93 +168,91 @@ def resultToTwoHopMeasurement(result, tv, uID, gcpI, gcpZ):
                              request_success=result['request']['success'],
                              request_time=getDeltaMilli(result['request']['t_start'],
                                                         result['request']['t_stop']),
-                             request_error=result['request']['error']
+                             request_error=result['request']['error'],
+                             **metadata,
                              )
 
 
-def resultToOneCircMeasurement(result, tv, uID, gcpI, gcpZ):
+def resultToOneCircMeasurement(result, metadata):
     return TwoHopMeasurement(timestamp=result['t_measure'],
-                             tor_version=tv,
-                             process=uID,
-                             gcp_instance=gcpI,
-                             gcp_zone=gcpZ,
                              target=result['target'],
                              circuit_success=result['success'],
                              circuit_time=getDeltaMilli(result['t_start'], result['t_stop']),
                              circuit_error=result['error'],
+                             **metadata
                              )
 
 
-async def test_two_hops(reactor, state, socks, relays, exits, repeats, tv, gcpI, gcpZ, uID):
-    nr = len(relays)
+async def test_two_hops(config, metadata, sources, exits):
+    nr = len(sources)
     ne = len(exits)
-    n = nr * ne * repeats
-    for i in range(repeats):
+    measurements = list()
+    for relay, exit_node in tqdm(product(sources, exits), total=nr * ne, leave=False):
+        result = await time_two_hop(config, relay, exit_node)
+        measurements.append(resultToTwoHopMeasurement(result, metadata))
+    batch_two_hop_insert(measurements, 200)
+    print(f"Inserted {len(measurements)} two-hop measurements at {datetime.datetime.now()}")
+    return True
+
+
+async def test_one_circuit(config, metadata, targets, chunk_size=100):
+    for chunk in chunked(targets, chunk_size):
         measurements = list()
-        for relay, exit_node in tqdm(product(relays, exits), total=nr * ne, leave=False):
-            result = await time_two_hop(reactor, state, socks, relay, exit_node)
-            measurements.append(resultToTwoHopMeasurement(result, tv, gcpI, gcpZ, uID))
-        batch_two_hop_insert(measurements, 200)
-        print(f"Inserted {len(measurements)} records at {datetime.datetime.now()}")
-    return n
+        for t in tqdm(chunk, total=chunk_size, leave=False):
+            timestamp = datetime.datetime.now()
+            try:
+                c, result = await build_one_hop_circuit(config['reactor'], config['state'], t)
+                gracefulClose(c)
+            except Exception as err:
+                print(f"Top Level Error: {err}")
+                continue
+            result['t_measure'] = timestamp
+            measurements.append(resultToOneCircMeasurement(result, metadata))
+        batch_one_circ_insert(measurements, chunk_size)
+        print(f"Inserted {len(measurements)} one-hop measurements at {datetime.datetime.now()}")
+    return True
 
 
-async def test_one_circuit(reactor, state, targets, repeats, tv, gcpI, gcpZ, uID):
-    nr = len(targets)
-    n = nr * repeats
-    chunkSize= 100
-    for i in range(repeats):
-        for chunk in chunked(targets,chunkSize):
-            measurements = list()
-            for t in tqdm(chunk,total=chunkSize,leave=False):
-                timestamp = datetime.datetime.now()
-                try:
-                    c,result = await build_one_hop_circuit(reactor, state, t)
-                    gracefulClose(c)
-                except Exception as err:
-                    print(f"Top Level Error: {err}")
-                result['t_measure'] = timestamp
-                measurements.append(resultToOneCircMeasurement(result, tv, gcpI, gcpZ, uID))
-            batch_one_circ_insert(measurements, chunkSize)
-            print(f"Inserted {len(measurements)} records at {datetime.datetime.now()}")
-    return n
-
-async def setup(reactor,instance):
-    uID = uuid.uuid1()
-    [tor, config, state, socks] = await launch_tor(reactor, instance, uID)
-    gcpI = get_gcp_metadata("name").text
-    gcpZ = get_gcp_metadata("zone").text.split("/")[-1]
-    print(f"Running as {uID} on {gcpI} in {gcpZ} with Tor {tor.version}")
-    config.CircuitBuildTimeout = 10
-    config.SocksTimeout = 10
-    config.CircuitStreamTimeout = 10
-    #config.save() #TODO Fix this
+async def setup(reactor, instance):
+    [tor, config, state, socks] = await launch_tor(reactor, instance)
+    assert (config.CircuitBuildTimeout == 10)
+    assert (config.SocksTimeout == 10)
+    assert (config.CircuitStreamTimeout == 10)
     routers = state.all_routers
     relays = list(routers)
     shuffle(relays)
-    return tor,state,relays,socks,gcpI,gcpZ,uID
+    config = {"reactor": reactor, "tor": tor, "state": state, "relays": relays, "socks": socks}
+    metadata = {
+        "gcp_inst": get_gcp_metadata("name").text,
+        "gcp_zone": get_gcp_metadata("zone").text.split("/")[-1],
+        "uuid": uuid.uuid1(),
+        "tor_pid": state.tor_pid,
+        "tor_version": tor.version,
+        "tor_instance": instance}
+    return config,metadata
 
-async def _main(reactor,arguments):
+
+async def _main(reactor, arguments):
     print(f"Beginning Measurements at {datetime.datetime.now()}")
     db = getDatabase()
     db.init(arguments.database)
     db.connect()
-    db.create_tables([TwoHopMeasurement,OneCircuitMeasurement])
-    #TODO store tor.pid and instance name
-    tor,state,relays,socks,gcpI,gcpZ,uID = await setup(reactor,arguments.instance)
-
+    db.create_tables([TwoHopMeasurement, OneCircuitMeasurement])
+    c, m = await setup(reactor, arguments.instance)
+    print(
+        f"Running as {m['uuid']} on {m['gcp_inst']} in {m['gcp_zone']} with Tor instance {m['tor_instance']} pid {m['tor_pid']}  v{m['tor_version']}")
     if arguments.mode == "one-hop":
-        await test_one_circuit(reactor, state, relays, 1, tor.version, gcpI, gcpZ, uID)
+        await test_one_circuit(c, m, c['relays'])
     elif arguments.mode == "exits":
-        guard1 = state.routers_by_hash["$6C251FA7F45E9DEDF5F69BA3D167F6BA736F49CD"]
-        exits = list(filter(lambda router: "exit" in router.flags, relays))
-        await test_two_hops(reactor, state, socks, [guard1], exits, 1, tor.version, gcpI, gcpZ, uID)
+        guard1 = c['state'].routers_by_hash["$6C251FA7F45E9DEDF5F69BA3D167F6BA736F49CD"]
+        exits = list(filter(lambda router: "exit" in router.flags, c['relays']))
+        await test_two_hops(c, m, [guard1], exits)
     elif arguments.mode == "guards":
-        exit_node = state.routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
-        relays = list(filter(lambda router: "exit" not in router.flags, relays))
-        await test_two_hops(reactor, state, socks, relays, [exit_node], 1, tor.version, gcpI, gcpZ,
-                                            uID)
+        exit_node = c['state'].routers_by_hash["$606ECF8CA6F9A0C84165908C285F8193039A259D"]
+        non_exits = list(filter(lambda router: "exit" not in router.flags, c['relays']))
+        await test_two_hops(c, m, non_exits, [exit_node])
     db.close()
+
 
 def main(arguments):
     return react(
