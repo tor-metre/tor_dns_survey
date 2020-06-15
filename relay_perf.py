@@ -112,7 +112,8 @@ def getDeltaMilli(t1, t2):
     if t1 is None or t2 is None:
         return -1
     else:
-        return int((t2 - t1).microseconds / 1000)
+        d = t2 - t1
+        return 1000*(d.seconds)+int(d.microseconds / 1000)
 
 
 def get_gcp_metadata(key):
@@ -179,7 +180,6 @@ async def _main(reactor, arguments):
     db = getDatabase()
     print(arguments.database)
     db_args = db_url_parse(arguments.database)
-    print(db_args)
     db.init(**db_args)
     db.connect()
     db.create_tables([TwoHopMeasurement, OneCircuitMeasurement])
