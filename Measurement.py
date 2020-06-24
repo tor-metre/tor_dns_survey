@@ -13,6 +13,15 @@ def batch_one_circ_insert(measurements, batch):
     with db.atomic():
         OneCircuitMeasurement.bulk_create(measurements, batch)
 
+class ArthurMeasurement(Model):
+    timestamp = DateTimeField(unique=True)
+    url = TextField()
+    exit = TextField()
+    success = BooleanField()
+    latency = IntegerField()
+    class Meta:
+        database = db
+
 class TwoHopMeasurement(Model):
     measurer_id = UUIDField()
     tor_pid = IntegerField()
